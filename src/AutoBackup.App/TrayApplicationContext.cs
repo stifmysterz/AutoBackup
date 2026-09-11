@@ -45,7 +45,7 @@ public class TrayApplicationContext : ApplicationContext
 
         _trayIcon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = LoadAppIcon(),
             Text = BuildTrayText(),
             Visible = true,
             ContextMenuStrip = menu
@@ -151,6 +151,23 @@ public class TrayApplicationContext : ApplicationContext
             // was somehow never captured.
             action();
         }
+    }
+
+    private static Icon LoadAppIcon()
+    {
+        // The app's own icon is embedded into the exe's Win32 resources at build time via
+        // <ApplicationIcon> in the csproj, so pulling it back out of the running executable
+        // guarantees it matches and needs no separate file alongside a single-file publish.
+        try
+        {
+            var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            if (icon != null) return icon;
+        }
+        catch
+        {
+            // fall through to the system default below
+        }
+        return SystemIcons.Application;
     }
 
     private string BuildTrayText()
