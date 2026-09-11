@@ -5,9 +5,9 @@ namespace AutoBackup.Core.Backup;
 
 public class BackupEngine
 {
-    public BackupResult RunBackup(IReadOnlyList<string> sourceFolders, string driveRoot, IReadOnlyList<string> customExcludePatterns)
+    public BackupResult RunBackup(IReadOnlyList<string> sourceFolders, string driveRoot, IReadOnlyList<string> customExcludePatterns, DateTime? now = null)
     {
-        var startedAt = DateTime.Now;
+        var startedAt = now ?? DateTime.Now;
         var backupRoot = SnapshotPathPlanner.GetBackupRoot(driveRoot);
         Directory.CreateDirectory(backupRoot);
 
@@ -27,17 +27,7 @@ public class BackupEngine
         }
 
         var finalPath = SnapshotPathPlanner.GetFinalPath(workingPath);
-
-        // Handle the case where the final path already exists (same minute timestamp)
-        int counter = 0;
-        var targetPath = finalPath;
-        while (Directory.Exists(targetPath))
-        {
-            targetPath = $"{finalPath}_{counter}";
-            counter++;
-        }
-
-        Directory.Move(workingPath, targetPath);
+        Directory.Move(workingPath, finalPath);
 
         var outcome = failed > 0 ? BackupOutcome.PartialSuccess : BackupOutcome.Success;
         return new BackupResult
@@ -47,7 +37,7 @@ public class BackupEngine
             FilesLinked = linked,
             FilesFailed = failed,
             Errors = errors,
-            SnapshotPath = targetPath,
+            SnapshotPath = finalPath,
             StartedAt = startedAt,
             CompletedAt = DateTime.Now
         };

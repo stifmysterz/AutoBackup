@@ -32,9 +32,9 @@ public class BackupEngineTests
         File.WriteAllText(Path.Combine(source.FullName, "a.txt"), "hello");
         var driveRoot = Directory.CreateDirectory(Path.Combine(temp.Path, "Drive")).FullName;
         var engine = new BackupEngine();
-        engine.RunBackup(new[] { source.FullName }, driveRoot, Array.Empty<string>());
+        engine.RunBackup(new[] { source.FullName }, driveRoot, Array.Empty<string>(), now: new DateTime(2026, 9, 11, 22, 0, 0));
 
-        var result = engine.RunBackup(new[] { source.FullName }, driveRoot, Array.Empty<string>());
+        var result = engine.RunBackup(new[] { source.FullName }, driveRoot, Array.Empty<string>(), now: new DateTime(2026, 9, 11, 22, 1, 0));
 
         Assert.Equal(0, result.FilesCopied);
         Assert.Equal(1, result.FilesLinked);
@@ -49,11 +49,11 @@ public class BackupEngineTests
         File.WriteAllText(Path.Combine(source.FullName, "b.txt"), "world");
         var driveRoot = Directory.CreateDirectory(Path.Combine(temp.Path, "Drive")).FullName;
         var engine = new BackupEngine();
-        engine.RunBackup(new[] { source.FullName }, driveRoot, Array.Empty<string>());
+        engine.RunBackup(new[] { source.FullName }, driveRoot, Array.Empty<string>(), now: new DateTime(2026, 9, 11, 22, 0, 0));
 
         Thread.Sleep(50);
         File.WriteAllText(Path.Combine(source.FullName, "a.txt"), "hello changed");
-        var result = engine.RunBackup(new[] { source.FullName }, driveRoot, Array.Empty<string>());
+        var result = engine.RunBackup(new[] { source.FullName }, driveRoot, Array.Empty<string>(), now: new DateTime(2026, 9, 11, 22, 1, 0));
 
         Assert.Equal(1, result.FilesCopied);
         Assert.Equal(1, result.FilesLinked);
@@ -69,10 +69,10 @@ public class BackupEngineTests
         File.WriteAllText(deletedFilePath, "bye");
         var driveRoot = Directory.CreateDirectory(Path.Combine(temp.Path, "Drive")).FullName;
         var engine = new BackupEngine();
-        var firstResult = engine.RunBackup(new[] { source.FullName }, driveRoot, Array.Empty<string>());
+        var firstResult = engine.RunBackup(new[] { source.FullName }, driveRoot, Array.Empty<string>(), now: new DateTime(2026, 9, 11, 22, 0, 0));
         File.Delete(deletedFilePath);
 
-        var secondResult = engine.RunBackup(new[] { source.FullName }, driveRoot, Array.Empty<string>());
+        var secondResult = engine.RunBackup(new[] { source.FullName }, driveRoot, Array.Empty<string>(), now: new DateTime(2026, 9, 11, 22, 1, 0));
 
         Assert.True(File.Exists(Path.Combine(firstResult.SnapshotPath, "Desktop", "gone.txt")));
         Assert.False(File.Exists(Path.Combine(secondResult.SnapshotPath, "Desktop", "gone.txt")));
