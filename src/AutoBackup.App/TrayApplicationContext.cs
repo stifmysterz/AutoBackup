@@ -1,3 +1,4 @@
+using System.Threading;
 using AutoBackup.Core.Drives;
 using AutoBackup.Core.Logging;
 using AutoBackup.Core.Models;
@@ -14,12 +15,21 @@ public class TrayApplicationContext : ApplicationContext
     private readonly IDriveScanner _driveScanner = new DriveScanner();
     private readonly System.Threading.Timer _schedulerTimer;
     private readonly NotifyIcon _trayIcon;
+    // Captured on the UI thread before Application.Run - used to marshal NotifyIcon access
+    // (which is not thread-safe) back from the ThreadPool thread that System.Threading.Timer
+    // callbacks run on.
+    private readonly SynchronizationContext? _uiContext = SynchronizationContext.Current;
     private BackupSettings _settings;
+    private int _isBackupRunning;
 
     public TrayApplicationContext()
     {
         _settings = SettingsStore.Load(_settingsPath);
         _logger = new BackupLogger(Path.Combine(Path.GetDirectoryName(_settingsPath)!, "backup.log"));
+
+        // Reconcile the registry startup entry with the current setting on every launch, not
+        // just when the user opens and saves Settings once.
+        StartupRegistration.Apply(_settings.StartWithWindows, Application.ExecutablePath);
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("立即备份", null, (_, _) => RunBackup(manualTrigger: true));
@@ -50,11 +60,50 @@ public class TrayApplicationContext : ApplicationContext
 
     private void RunBackup(bool manualTrigger)
     {
-        var orchestrator = new BackupOrchestrator(_driveScanner, _logger);
-        var result = orchestrator.RunOnce(_settings);
+        // Guard against a scheduled tick firing while a manual backup (or another tick) is
+        // still running - without this, two overlapping runs could collide on the same
+        // .inprogress/snapshot folder.
+        if (Interlocked.CompareExchange(ref _isBackupRunning, 1, 0) != 0) return;
 
-        _settings.LastRunAt = DateTime.Now;
-        SettingsStore.Save(_settings, _settingsPath);
+        try
+        {
+            OrchestrationResult result;
+            try
+            {
+                var orchestrator = new BackupOrchestrator(_driveScanner, _logger);
+                result = orchestrator.RunOnce(_settings);
+
+                _settings.LastRunAt = DateTime.Now;
+                SettingsStore.Save(_settings, _settingsPath);
+            }
+            catch (Exception ex)
+            {
+                // Never let an unexpected exception escape the timer callback or the click
+                // handler - log it and surface a balloon instead of crashing the app.
+                try
+                {
+                    _logger.Append(new BackupLogEntry { Timestamp = DateTime.Now, Outcome = "Error", Message = ex.Message });
+                }
+                catch
+                {
+                    // best effort - logging itself must not crash the process
+                }
+
+                PostToUiThread(() =>
+                    _trayIcon.ShowBalloonTip(5000, "Auto Backup", $"备份出现意外错误：{ex.Message}", ToolTipIcon.Error));
+                return;
+            }
+
+            PostToUiThread(() => ApplyResultToUi(result, manualTrigger));
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isBackupRunning, 0);
+        }
+    }
+
+    private void ApplyResultToUi(OrchestrationResult result, bool manualTrigger)
+    {
         _trayIcon.Text = BuildTrayText();
 
         switch (result.Outcome)
@@ -77,6 +126,20 @@ public class TrayApplicationContext : ApplicationContext
             case OrchestrationOutcome.NoSourceFolders:
                 if (manualTrigger) _trayIcon.ShowBalloonTip(5000, "Auto Backup", "还没有设置备份来源文件夹。", ToolTipIcon.Warning);
                 break;
+        }
+    }
+
+    private void PostToUiThread(Action action)
+    {
+        if (_uiContext != null)
+        {
+            _uiContext.Post(_ => action(), null);
+        }
+        else
+        {
+            // Fall back to running inline rather than crashing if a UI SynchronizationContext
+            // was somehow never captured.
+            action();
         }
     }
 

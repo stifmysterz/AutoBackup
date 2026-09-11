@@ -1,3 +1,4 @@
+using AutoBackup.Core.Backup;
 using AutoBackup.Core.Drives;
 using AutoBackup.Core.Models;
 using AutoBackup.Core.Orchestration;
@@ -55,7 +56,39 @@ public partial class SettingsForm : Form
             if (_excludeListBox.SelectedItem != null) _excludeListBox.Items.Remove(_excludeListBox.SelectedItem);
         };
         _backupNowButton.Click += (_, _) => RunBackupNow();
-        _saveButton.Click += (_, _) => SaveIntoSettings();
+        FormClosing += OnFormClosing;
+    }
+
+    private void OnFormClosing(object? sender, FormClosingEventArgs e)
+    {
+        // Only validate/commit on an accepted save (DialogResult.OK, from the 保存 button).
+        // Cancel or closing via the window's X should just discard the in-progress edits.
+        if (DialogResult != DialogResult.OK) return;
+
+        var candidate = BuildSettingsFromForm();
+
+        var driveLetter = _selectedDrive?.DriveLetter;
+        if (driveLetter == null && !string.IsNullOrEmpty(candidate.TargetVolumeSerial))
+        {
+            // No drive was (re)picked in this session - fall back to whatever drive is
+            // currently connected under the previously saved serial, if any.
+            var match = DriveIdentifier.FindBySerial(_driveScanner.GetReadyDrives(), candidate.TargetVolumeSerial);
+            driveLetter = match?.DriveLetter;
+        }
+
+        if (driveLetter != null && candidate.SourceFolders.Count > 0)
+        {
+            var backupRoot = SnapshotPathPlanner.GetBackupRoot(driveLetter);
+            if (OverlapChecker.TryFindOverlap(candidate.SourceFolders, backupRoot, out var conflictingSource))
+            {
+                MessageBox.Show($"源文件夹 \"{conflictingSource}\" 与备份目标位置冲突，请调整后再保存。", "Auto Backup", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                e.Cancel = true;
+                DialogResult = DialogResult.None;
+                return;
+            }
+        }
+
+        Settings = candidate;
     }
 
     private void PickTargetDrive()
@@ -91,8 +124,6 @@ public partial class SettingsForm : Form
         var result = orchestrator.RunOnce(settings);
         MessageBox.Show(result.Message, "备份结果", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
-
-    private void SaveIntoSettings() => Settings = BuildSettingsFromForm();
 
     private BackupSettings BuildSettingsFromForm()
     {
