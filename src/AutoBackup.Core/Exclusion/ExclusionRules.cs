@@ -10,6 +10,10 @@ public static class ExclusionRules
     {
         if ((attributes & FileAttributes.Hidden) != 0) return true;
         if ((attributes & FileAttributes.System) != 0) return true;
+        // A junction or symlink could point at an ancestor directory, causing unbounded
+        // recursion if followed. Standard practice for backup tools is to treat reparse
+        // points as excluded rather than following them.
+        if ((attributes & FileAttributes.ReparsePoint) != 0) return true;
 
         var name = Path.GetFileName(fullPath);
         if (name.Contains("cache", StringComparison.OrdinalIgnoreCase)) return true;
