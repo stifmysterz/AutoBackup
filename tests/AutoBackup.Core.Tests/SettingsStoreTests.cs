@@ -15,7 +15,10 @@ public class SettingsStoreTests
         var settings = SettingsStore.Load(path);
 
         Assert.Equal(30, settings.RetentionDays);
-        Assert.Empty(settings.SourceFolders);
+        // A fresh install should have something to back up out of the box (Desktop + My
+        // Documents) rather than silently doing nothing until the user configures folders.
+        Assert.NotEmpty(settings.SourceFolders);
+        Assert.NotEmpty(settings.ScheduleDays);
     }
 
     [Fact]
