@@ -50,6 +50,7 @@ public class TrayApplicationContext : ApplicationContext
             Visible = true,
             ContextMenuStrip = menu
         };
+        _trayIcon.ShowBalloonTip(5000, "Auto Backup", "已启动，正在后台运行", ToolTipIcon.Info);
 
         _schedulerTimer = new System.Threading.Timer(OnTimerTick, null, TimeSpan.Zero, TimeSpan.FromSeconds(60));
 
