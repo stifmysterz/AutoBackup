@@ -15,10 +15,15 @@ public class TrayApplicationContext : ApplicationContext
     private readonly IDriveScanner _driveScanner = new DriveScanner();
     private readonly System.Threading.Timer _schedulerTimer;
     private readonly NotifyIcon _trayIcon;
-    // Captured on the UI thread before Application.Run - used to marshal NotifyIcon access
-    // (which is not thread-safe) back from the ThreadPool thread that System.Threading.Timer
-    // callbacks run on.
-    private readonly SynchronizationContext? _uiContext = SynchronizationContext.Current;
+    // Used to marshal NotifyIcon access (which is not thread-safe) back from the ThreadPool
+    // thread that System.Threading.Timer callbacks run on. Captured at the end of the
+    // constructor rather than as a field initializer: field initializers run before the
+    // constructor body, i.e. before the ContextMenuStrip below is constructed. It's a
+    // Control's own constructor that installs WindowsFormsSynchronizationContext into
+    // SynchronizationContext.Current (NotifyIcon is a Component, not a Control, and
+    // contributes nothing to this) - capturing any earlier than that first Control's
+    // construction would silently pick up null and fall back to running inline.
+    private readonly SynchronizationContext? _uiContext;
     private BackupSettings _settings;
     private int _isBackupRunning;
 
@@ -47,6 +52,11 @@ public class TrayApplicationContext : ApplicationContext
         };
 
         _schedulerTimer = new System.Threading.Timer(OnTimerTick, null, TimeSpan.Zero, TimeSpan.FromSeconds(60));
+
+        // Capture last, after the ContextMenuStrip (a Control) above has been constructed, so
+        // this actually picks up the real WindowsFormsSynchronizationContext instead of null
+        // (see field comment above).
+        _uiContext = SynchronizationContext.Current;
     }
 
     private void OnTimerTick(object? state)
