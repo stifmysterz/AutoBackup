@@ -18,6 +18,8 @@ public class BackupOrchestrator
 
     public OrchestrationResult RunOnce(BackupSettings settings)
     {
+        _logger.RotateIfNeeded(maxSizeBytes: 5 * 1024 * 1024, maxAgeDays: 90, now: DateTime.Now);
+
         var sourceFolders = settings.SourceFolders.Where(Directory.Exists).ToList();
         if (sourceFolders.Count == 0)
             return new OrchestrationResult { Outcome = OrchestrationOutcome.NoSourceFolders, Message = "没有有效的源文件夹" };
@@ -43,6 +45,16 @@ public class BackupOrchestrator
         }
 
         var estimated = SpaceChecker.EstimateSourceSizeBytes(sourceFolders, settings.CustomExcludePatterns);
+        var previousSnapshot = SnapshotPathPlanner.FindLatestSnapshot(backupRoot);
+        if (previousSnapshot != null)
+        {
+            // Real backups after the first are incremental (unchanged files are hardlinked,
+            // not re-copied), so comparing against the total source size would permanently
+            // block backups once free space drops below that total. Approximate the
+            // incremental delta by subtracting what the previous snapshot already holds.
+            var alreadyBacked = SpaceChecker.GetSnapshotSizeBytes(previousSnapshot);
+            estimated = Math.Max(0, estimated - alreadyBacked);
+        }
         if (!SpaceChecker.HasEnoughSpace(estimated, targetDrive.FreeBytes))
         {
             LogSkip("硬盘剩余空间不足，已跳过本次备份");
@@ -56,6 +68,12 @@ public class BackupOrchestrator
 
         var outcome = backupResult.Outcome == BackupOutcome.Success ? OrchestrationOutcome.Success : OrchestrationOutcome.PartialSuccess;
         var message = $"复制 {backupResult.FilesCopied}，硬链接 {backupResult.FilesLinked}，失败 {backupResult.FilesFailed}";
+        if (backupResult.Errors.Count > 0)
+        {
+            var shown = string.Join("; ", backupResult.Errors.Take(5));
+            var suffix = backupResult.Errors.Count > 5 ? $"...(共{backupResult.Errors.Count}个)" : string.Empty;
+            message += $"；{shown}{suffix}";
+        }
         _logger.Append(new BackupLogEntry { Timestamp = DateTime.Now, Outcome = outcome.ToString(), Message = message });
 
         return new OrchestrationResult { Outcome = outcome, BackupResult = backupResult, Message = message };
