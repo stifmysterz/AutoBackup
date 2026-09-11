@@ -12,17 +12,28 @@ public class DriveScanner : IDriveScanner
             if (drive.DriveType != DriveType.Removable && drive.DriveType != DriveType.Fixed) continue;
             if (!drive.IsReady) continue;
 
-            var (serial, label) = VolumeSerialReader.Read(drive.RootDirectory.FullName);
-            if (serial == null) continue;
-
-            result.Add(new DriveInfoRecord
+            try
             {
-                DriveLetter = drive.RootDirectory.FullName,
-                VolumeSerial = serial,
-                VolumeLabel = label,
-                FreeBytes = drive.AvailableFreeSpace,
-                TotalBytes = drive.TotalSize
-            });
+                var (serial, label) = VolumeSerialReader.Read(drive.RootDirectory.FullName);
+                if (serial == null) continue;
+
+                result.Add(new DriveInfoRecord
+                {
+                    DriveLetter = drive.RootDirectory.FullName,
+                    VolumeSerial = serial,
+                    VolumeLabel = label,
+                    FreeBytes = drive.AvailableFreeSpace,
+                    TotalBytes = drive.TotalSize
+                });
+            }
+            catch (IOException)
+            {
+                continue;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                continue;
+            }
         }
         return result;
     }
