@@ -102,6 +102,7 @@ public class TrayApplicationContext : ApplicationContext
     {
         _schedulerTimer.Dispose();
         _trayIcon.Visible = false;
+        _trayIcon.Dispose();
         Application.Exit();
     }
 }
