@@ -8,6 +8,7 @@ partial class SettingsForm
     private Button _removeSourceButton;
     private Label _targetDriveLabel;
     private Button _changeDriveButton;
+    private Button _snapshotHistoryButton;
     private CheckedListBox _scheduleDaysListBox;
     private DateTimePicker _scheduleTimePicker;
     private NumericUpDown _retentionDaysUpDown;
@@ -33,6 +34,7 @@ partial class SettingsForm
         _removeSourceButton = new Button { Left = 320, Top = 60, Width = 100, Text = "删除选中" };
 
         _targetDriveLabel = new Label { Left = 10, Top = 120, Width = 400, Text = "备份目标：未设置" };
+        _snapshotHistoryButton = new Button { Left = 200, Top = 145, Width = 110, Text = "查看快照历史" };
         _changeDriveButton = new Button { Left = 320, Top = 145, Width = 100, Text = "更改硬盘" };
 
         var scheduleLabel = new Label { Left = 10, Top = 180, Width = 200, Text = "备份计划（星期几）：" };
@@ -51,7 +53,7 @@ partial class SettingsForm
 
         _startWithWindowsCheckBox = new CheckBox { Left = 10, Top = 420, Width = 200, Text = "开机自动启动" };
 
-        _backupNowButton = new Button { Left = 10, Top = 450, Width = 100, Text = "立即备份一次" };
+        _backupNowButton = new Button { Left = 10, Top = 450, Width = 120, Text = "立即备份一次" };
         _saveButton = new Button { Left = 250, Top = 450, Width = 80, Text = "保存", DialogResult = DialogResult.OK };
         _cancelButton = new Button { Left = 340, Top = 450, Width = 80, Text = "取消", DialogResult = DialogResult.Cancel };
 
@@ -65,7 +67,7 @@ partial class SettingsForm
         Controls.AddRange(new Control[]
         {
             sourceLabel, _sourceListBox, _addSourceButton, _removeSourceButton,
-            _targetDriveLabel, _changeDriveButton,
+            _targetDriveLabel, _snapshotHistoryButton, _changeDriveButton,
             scheduleLabel, _scheduleDaysListBox, timeLabel, _scheduleTimePicker,
             retentionLabel, _retentionDaysUpDown,
             excludeLabel, _excludeListBox, _addExcludeButton, _removeExcludeButton,

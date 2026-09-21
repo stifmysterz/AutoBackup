@@ -1,5 +1,6 @@
 using System.Threading;
 using AutoBackup.Core.Drives;
+using AutoBackup.Core.Formatting;
 using AutoBackup.Core.Logging;
 using AutoBackup.Core.Models;
 using AutoBackup.Core.Orchestration;
@@ -62,10 +63,44 @@ public class TrayApplicationContext : ApplicationContext
 
     private void OnTimerTick(object? state)
     {
+        RunStandaloneCleanup();
+
         var config = new ScheduleConfig { Days = _settings.ScheduleDays, Time = _settings.ScheduleTime };
         if (BackupScheduler.IsDueNow(config, DateTime.Now, _settings.LastRunAt))
         {
             RunBackup(manualTrigger: false);
+        }
+    }
+
+    /// <summary>
+    /// Prunes expired snapshots independently of whether a backup runs. Without this, a user
+    /// whose backups keep getting skipped (drive unplugged at the scheduled time, schedule
+    /// day unchecked) would see expired snapshots pile up, because cleanup used to happen
+    /// only as a side effect of a successful backup.
+    /// </summary>
+    private void RunStandaloneCleanup()
+    {
+        // A backup in progress already runs cleanup itself at the end; skip rather than race it.
+        if (Interlocked.CompareExchange(ref _isBackupRunning, 1, 0) != 0) return;
+
+        try
+        {
+            new BackupOrchestrator(_driveScanner, _logger).RunCleanupOnly(_settings);
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                _logger.Append(new BackupLogEntry { Timestamp = DateTime.Now, Outcome = "Error", Message = $"清理旧快照失败：{ex.Message}" });
+            }
+            catch
+            {
+                // best effort - logging itself must not crash the process
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isBackupRunning, 0);
         }
     }
 
@@ -120,7 +155,7 @@ public class TrayApplicationContext : ApplicationContext
         switch (result.Outcome)
         {
             case OrchestrationOutcome.Success:
-                if (manualTrigger) _trayIcon.ShowBalloonTip(3000, "Auto Backup", "备份完成", ToolTipIcon.Info);
+                if (manualTrigger) _trayIcon.ShowBalloonTip(3000, "Auto Backup", BuildSuccessMessage(result), ToolTipIcon.Info);
                 break;
             case OrchestrationOutcome.PartialSuccess:
                 _trayIcon.ShowBalloonTip(5000, "Auto Backup", $"备份部分完成：{result.Message}", ToolTipIcon.Warning);
@@ -138,6 +173,17 @@ public class TrayApplicationContext : ApplicationContext
                 if (manualTrigger) _trayIcon.ShowBalloonTip(5000, "Auto Backup", "还没有设置备份来源文件夹。", ToolTipIcon.Warning);
                 break;
         }
+    }
+
+    private static string BuildSuccessMessage(OrchestrationResult result)
+    {
+        var backup = result.BackupResult;
+        if (backup == null) return "备份完成";
+
+        var size = ByteSizeFormatter.Format(backup.BytesCopied);
+        return backup.FilesCopied == 0
+            ? "备份完成，没有文件发生变化"
+            : $"备份完成，新增 {size}（{backup.FilesCopied} 个文件）";
     }
 
     private void PostToUiThread(Action action)

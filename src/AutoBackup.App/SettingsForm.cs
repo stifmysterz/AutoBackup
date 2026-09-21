@@ -1,5 +1,6 @@
 using AutoBackup.Core.Backup;
 using AutoBackup.Core.Drives;
+using AutoBackup.Core.Formatting;
 using AutoBackup.Core.Models;
 using AutoBackup.Core.Orchestration;
 using AutoBackup.Core.Logging;
@@ -26,9 +27,7 @@ public partial class SettingsForm : Form
         Settings = current;
 
         _sourceListBox.Items.AddRange(current.SourceFolders.ToArray());
-        _targetDriveLabel.Text = string.IsNullOrEmpty(current.TargetVolumeLabel)
-            ? "备份目标：未设置"
-            : $"备份目标：{current.TargetVolumeLabel}（未连接时会在备份时提醒）";
+        RefreshTargetDriveLabel();
         for (var i = 0; i < DayOrder.Length; i++)
             _scheduleDaysListBox.SetItemChecked(i, current.ScheduleDays.Contains(DayOrder[i]));
         _scheduleTimePicker.Value = DateTime.Today.Add(current.ScheduleTime.ToTimeSpan());
@@ -56,7 +55,49 @@ public partial class SettingsForm : Form
             if (_excludeListBox.SelectedItem != null) _excludeListBox.Items.Remove(_excludeListBox.SelectedItem);
         };
         _backupNowButton.Click += (_, _) => RunBackupNow();
+        _snapshotHistoryButton.Click += (_, _) => ShowSnapshotHistory();
         FormClosing += OnFormClosing;
+    }
+
+    /// <summary>
+    /// Shows the bound drive plus its live free/total space, so the user can see at a glance
+    /// whether snapshots are filling the disk without digging through Explorer.
+    /// </summary>
+    private void RefreshTargetDriveLabel()
+    {
+        var serial = _selectedDrive?.VolumeSerial ?? Settings.TargetVolumeSerial;
+        var label = _selectedDrive?.VolumeLabel ?? Settings.TargetVolumeLabel;
+
+        if (string.IsNullOrEmpty(serial))
+        {
+            _targetDriveLabel.Text = "备份目标：未设置";
+            return;
+        }
+
+        var connected = _selectedDrive ?? DriveIdentifier.FindBySerial(_driveScanner.GetReadyDrives(), serial);
+        _targetDriveLabel.Text = connected == null
+            ? $"备份目标：{label}（当前未连接）"
+            : $"备份目标：{connected.VolumeLabel} ({connected.DriveLetter})　剩余 {ByteSizeFormatter.Format(connected.FreeBytes)} / 共 {ByteSizeFormatter.Format(connected.TotalBytes)}";
+    }
+
+    private void ShowSnapshotHistory()
+    {
+        var serial = _selectedDrive?.VolumeSerial ?? Settings.TargetVolumeSerial;
+        if (string.IsNullOrEmpty(serial))
+        {
+            MessageBox.Show("还没有绑定备份硬盘。", "Auto Backup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var connected = _selectedDrive ?? DriveIdentifier.FindBySerial(_driveScanner.GetReadyDrives(), serial);
+        if (connected == null)
+        {
+            MessageBox.Show("备份硬盘未连接，插上之后才能查看快照历史。", "Auto Backup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        using var form = new SnapshotHistoryForm(SnapshotPathPlanner.GetBackupRoot(connected.DriveLetter));
+        form.ShowDialog(this);
     }
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
@@ -112,7 +153,7 @@ public partial class SettingsForm : Form
         if (picker.ShowDialog(this) == DialogResult.OK && list.SelectedIndex >= 0)
         {
             _selectedDrive = drives[list.SelectedIndex];
-            _targetDriveLabel.Text = $"备份目标：{_selectedDrive.VolumeLabel} ({_selectedDrive.DriveLetter})";
+            RefreshTargetDriveLabel();
         }
     }
 
