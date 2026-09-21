@@ -26,11 +26,12 @@ public class TrayApplicationContext : ApplicationContext
     // construction would silently pick up null and fall back to running inline.
     private readonly SynchronizationContext? _uiContext;
     private readonly ToolStripItem _backupNowMenuItem;
+    private readonly DeviceArrivalWatcher _deviceArrivalWatcher;
     private BackupSettings _settings;
     private int _isBackupRunning;
-    private DateTime _lastCleanupAt = DateTime.MinValue;
-    // Catch-up retries every minute until the drive reappears, so the "drive not connected"
-    // balloon and log line are emitted only once per due period instead of 60 times an hour.
+    // Set once a due backup has been reported as un-runnable (drive absent, disk full). It
+    // both suppresses duplicate balloons and parks the retry loop: rather than re-scanning
+    // drives every minute, the app waits to be told a volume arrived.
     private DateTime? _skipReportedForDueDate;
 
     public TrayApplicationContext()
@@ -58,24 +59,60 @@ public class TrayApplicationContext : ApplicationContext
         };
         _trayIcon.ShowBalloonTip(5000, "Auto Backup", "已启动，正在后台运行", ToolTipIcon.Info);
 
+        _deviceArrivalWatcher = new DeviceArrivalWatcher();
+        _deviceArrivalWatcher.VolumeArrived += OnVolumeArrived;
+
         _schedulerTimer = new System.Threading.Timer(OnTimerTick, null, TimeSpan.Zero, TimeSpan.FromSeconds(60));
 
         // Capture last, after the ContextMenuStrip (a Control) above has been constructed, so
         // this actually picks up the real WindowsFormsSynchronizationContext instead of null
         // (see field comment above).
         _uiContext = SynchronizationContext.Current;
+
+        // One sweep at startup covers snapshots that expired while the app wasn't running;
+        // after this, cleanup only happens on a drive arriving or a backup finishing.
+        Task.Run(RunStandaloneCleanup);
     }
 
+    /// <summary>
+    /// Pure schedule arithmetic - it never touches a disk unless a backup is actually due, so
+    /// an idle drive is left alone to sleep.
+    /// </summary>
     private void OnTimerTick(object? state)
     {
-        var config = new ScheduleConfig { Days = _settings.ScheduleDays, Time = _settings.ScheduleTime };
-        if (BackupScheduler.IsDueNow(config, DateTime.Now, _settings.LastSuccessfulRunAt))
-        {
-            RunBackup(manualTrigger: false);
-            return;
-        }
+        if (!IsBackupDue()) return;
 
-        RunStandaloneCleanup();
+        // Already told the user this due period can't run; wait for a volume to arrive rather
+        // than re-scanning drives every minute.
+        if (_skipReportedForDueDate == DateTime.Now.Date) return;
+
+        RunBackup(manualTrigger: false);
+    }
+
+    private bool IsBackupDue()
+    {
+        var config = new ScheduleConfig { Days = _settings.ScheduleDays, Time = _settings.ScheduleTime };
+        return BackupScheduler.IsDueNow(config, DateTime.Now, _settings.LastSuccessfulRunAt);
+    }
+
+    /// <summary>
+    /// A volume appeared: this is the moment a missed backup can finally run, and the only
+    /// time housekeeping is worth doing outside a backup.
+    /// </summary>
+    private void OnVolumeArrived()
+    {
+        _skipReportedForDueDate = null;
+
+        Task.Run(() =>
+        {
+            if (IsBackupDue())
+            {
+                RunBackup(manualTrigger: false);
+                return;
+            }
+
+            RunStandaloneCleanup();
+        });
     }
 
     /// <summary>
@@ -86,16 +123,11 @@ public class TrayApplicationContext : ApplicationContext
     /// </summary>
     private void RunStandaloneCleanup()
     {
-        // Scanning drives every single minute keeps an external drive spinning and never lets
-        // it idle down, for a sweep whose input only changes once a day.
-        if (DateTime.Now - _lastCleanupAt < TimeSpan.FromMinutes(30)) return;
-
         // A backup in progress already runs cleanup itself at the end; skip rather than race it.
         if (Interlocked.CompareExchange(ref _isBackupRunning, 1, 0) != 0) return;
 
         try
         {
-            _lastCleanupAt = DateTime.Now;
             new BackupOrchestrator(_driveScanner, _logger).RunCleanupOnly(_settings);
         }
         catch (Exception ex)
@@ -330,6 +362,8 @@ public class TrayApplicationContext : ApplicationContext
         }
 
         _schedulerTimer.Dispose();
+        _deviceArrivalWatcher.VolumeArrived -= OnVolumeArrived;
+        _deviceArrivalWatcher.Dispose();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
         Application.Exit();
