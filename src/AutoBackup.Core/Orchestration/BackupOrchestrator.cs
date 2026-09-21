@@ -17,7 +17,11 @@ public class BackupOrchestrator
         _logger = logger;
     }
 
-    public OrchestrationResult RunOnce(BackupSettings settings)
+    /// <param name="logSkips">Set false for repeated catch-up attempts, which retry every
+    /// minute until the drive reappears - logging each one would bury the log in duplicates.</param>
+    /// <param name="progress">Receives the running count of files processed, so a caller can
+    /// show that a long backup is alive rather than hung.</param>
+    public OrchestrationResult RunOnce(BackupSettings settings, bool logSkips = true, IProgress<int>? progress = null)
     {
         _logger.RotateIfNeeded(maxSizeBytes: 5 * 1024 * 1024, maxAgeDays: 90, now: DateTime.Now);
 
@@ -27,21 +31,21 @@ public class BackupOrchestrator
 
         if (string.IsNullOrEmpty(settings.TargetVolumeSerial))
         {
-            LogSkip("尚未绑定备份硬盘");
+            LogSkip("尚未绑定备份硬盘", logSkips);
             return new OrchestrationResult { Outcome = OrchestrationOutcome.DriveNotConnected, Message = "尚未绑定备份硬盘" };
         }
 
         var targetDrive = DriveIdentifier.FindBySerial(_driveScanner.GetReadyDrives(), settings.TargetVolumeSerial);
         if (targetDrive == null)
         {
-            LogSkip("备份硬盘未连接");
+            LogSkip("备份硬盘未连接", logSkips);
             return new OrchestrationResult { Outcome = OrchestrationOutcome.DriveNotConnected, Message = "备份硬盘未连接" };
         }
 
         var backupRoot = SnapshotPathPlanner.GetBackupRoot(targetDrive.DriveLetter);
         if (OverlapChecker.HasOverlap(sourceFolders, backupRoot))
         {
-            LogSkip("源文件夹与备份目标重叠，已阻止本次备份");
+            LogSkip("源文件夹与备份目标重叠，已阻止本次备份", logSkips);
             return new OrchestrationResult { Outcome = OrchestrationOutcome.SourceTargetOverlap, Message = "源文件夹与备份目标重叠，已阻止本次备份" };
         }
 
@@ -58,14 +62,26 @@ public class BackupOrchestrator
         }
         if (!SpaceChecker.HasEnoughSpace(estimated, targetDrive.FreeBytes))
         {
-            LogSkip("硬盘剩余空间不足，已跳过本次备份");
+            LogSkip("硬盘剩余空间不足，已跳过本次备份", logSkips);
             return new OrchestrationResult { Outcome = OrchestrationOutcome.InsufficientSpace, Message = "硬盘剩余空间不足，已跳过本次备份" };
         }
 
         var engine = new BackupEngine();
-        var backupResult = engine.RunBackup(sourceFolders, targetDrive.DriveLetter, settings.CustomExcludePatterns);
+        var backupResult = engine.RunBackup(sourceFolders, targetDrive.DriveLetter, settings.CustomExcludePatterns, progress: progress);
 
-        RetentionCleaner.CleanOldSnapshots(backupRoot, settings.RetentionDays, DateTime.Now);
+        // Cleanup runs after the data is already safely on disk, so a failure here is a
+        // housekeeping problem, not a backup failure. Letting it throw would report a
+        // successful backup to the user as an error.
+        try
+        {
+            var cleanupFailures = RetentionCleaner.CleanOldSnapshots(backupRoot, settings.RetentionDays, DateTime.Now);
+            foreach (var failure in cleanupFailures)
+                _logger.Append(new BackupLogEntry { Timestamp = DateTime.Now, Outcome = "CleanupFailed", Message = failure });
+        }
+        catch (Exception ex)
+        {
+            _logger.Append(new BackupLogEntry { Timestamp = DateTime.Now, Outcome = "CleanupFailed", Message = ex.Message });
+        }
 
         var outcome = backupResult.Outcome == BackupOutcome.Success ? OrchestrationOutcome.Success : OrchestrationOutcome.PartialSuccess;
         var message = $"复制 {backupResult.FilesCopied} ({ByteSizeFormatter.Format(backupResult.BytesCopied)})，硬链接 {backupResult.FilesLinked}，失败 {backupResult.FilesFailed}";
@@ -100,6 +116,9 @@ public class BackupOrchestrator
         return true;
     }
 
-    private void LogSkip(string message) =>
+    private void LogSkip(string message, bool logSkips)
+    {
+        if (!logSkips) return;
         _logger.Append(new BackupLogEntry { Timestamp = DateTime.Now, Outcome = "Skipped", Message = message });
+    }
 }

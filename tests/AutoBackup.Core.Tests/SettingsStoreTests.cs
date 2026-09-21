@@ -36,7 +36,7 @@ public class SettingsStoreTests
             RetentionDays = 45,
             CustomExcludePatterns = new List<string> { "*.log" },
             StartWithWindows = false,
-            LastRunAt = new DateTime(2026, 9, 10, 22, 0, 0)
+            LastSuccessfulRunAt = new DateTime(2026, 9, 10, 22, 0, 0)
         };
 
         SettingsStore.Save(original, path);
@@ -49,6 +49,6 @@ public class SettingsStoreTests
         Assert.Equal(original.RetentionDays, loaded.RetentionDays);
         Assert.Equal(original.CustomExcludePatterns, loaded.CustomExcludePatterns);
         Assert.Equal(original.StartWithWindows, loaded.StartWithWindows);
-        Assert.Equal(original.LastRunAt, loaded.LastRunAt);
+        Assert.Equal(original.LastSuccessfulRunAt, loaded.LastSuccessfulRunAt);
     }
 }

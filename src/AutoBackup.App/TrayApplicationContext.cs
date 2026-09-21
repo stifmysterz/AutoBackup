@@ -25,8 +25,13 @@ public class TrayApplicationContext : ApplicationContext
     // contributes nothing to this) - capturing any earlier than that first Control's
     // construction would silently pick up null and fall back to running inline.
     private readonly SynchronizationContext? _uiContext;
+    private readonly ToolStripItem _backupNowMenuItem;
     private BackupSettings _settings;
     private int _isBackupRunning;
+    private DateTime _lastCleanupAt = DateTime.MinValue;
+    // Catch-up retries every minute until the drive reappears, so the "drive not connected"
+    // balloon and log line are emitted only once per due period instead of 60 times an hour.
+    private DateTime? _skipReportedForDueDate;
 
     public TrayApplicationContext()
     {
@@ -38,9 +43,9 @@ public class TrayApplicationContext : ApplicationContext
         StartupRegistration.Apply(_settings.StartWithWindows, Application.ExecutablePath);
 
         var menu = new ContextMenuStrip();
-        menu.Items.Add("立即备份", null, (_, _) => RunBackup(manualTrigger: true));
+        _backupNowMenuItem = menu.Items.Add("立即备份", null, (_, _) => StartBackup(manualTrigger: true));
         menu.Items.Add("打开设置", null, OnOpenSettingsClicked);
-        menu.Items.Add("查看备份日志", null, (_, _) => new LogViewerForm(_logger).ShowDialog());
+        menu.Items.Add("查看备份日志", null, OnViewLogClicked);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, OnExitClicked);
 
@@ -63,13 +68,14 @@ public class TrayApplicationContext : ApplicationContext
 
     private void OnTimerTick(object? state)
     {
-        RunStandaloneCleanup();
-
         var config = new ScheduleConfig { Days = _settings.ScheduleDays, Time = _settings.ScheduleTime };
-        if (BackupScheduler.IsDueNow(config, DateTime.Now, _settings.LastRunAt))
+        if (BackupScheduler.IsDueNow(config, DateTime.Now, _settings.LastSuccessfulRunAt))
         {
             RunBackup(manualTrigger: false);
+            return;
         }
+
+        RunStandaloneCleanup();
     }
 
     /// <summary>
@@ -80,11 +86,16 @@ public class TrayApplicationContext : ApplicationContext
     /// </summary>
     private void RunStandaloneCleanup()
     {
+        // Scanning drives every single minute keeps an external drive spinning and never lets
+        // it idle down, for a sweep whose input only changes once a day.
+        if (DateTime.Now - _lastCleanupAt < TimeSpan.FromMinutes(30)) return;
+
         // A backup in progress already runs cleanup itself at the end; skip rather than race it.
         if (Interlocked.CompareExchange(ref _isBackupRunning, 1, 0) != 0) return;
 
         try
         {
+            _lastCleanupAt = DateTime.Now;
             new BackupOrchestrator(_driveScanner, _logger).RunCleanupOnly(_settings);
         }
         catch (Exception ex)
@@ -104,6 +115,24 @@ public class TrayApplicationContext : ApplicationContext
         }
     }
 
+    /// <summary>
+    /// Entry point for a user-initiated backup. Unlike the scheduled path this always gives
+    /// feedback, including when it declines to start, so clicking 立即备份 never looks like a
+    /// dead button.
+    /// </summary>
+    private void StartBackup(bool manualTrigger)
+    {
+        if (Volatile.Read(ref _isBackupRunning) != 0)
+        {
+            _trayIcon.ShowBalloonTip(3000, "Auto Backup", "备份正在进行中，请稍候…", ToolTipIcon.Info);
+            return;
+        }
+
+        // Copying files on the UI thread freezes the tray menu and every window for the whole
+        // backup - Windows paints the app as "not responding" on a large first run.
+        Task.Run(() => RunBackup(manualTrigger));
+    }
+
     private void RunBackup(bool manualTrigger)
     {
         // Guard against a scheduled tick firing while a manual backup (or another tick) is
@@ -113,14 +142,27 @@ public class TrayApplicationContext : ApplicationContext
 
         try
         {
+            PostToUiThread(() => SetBusyUi(true, "备份中…"));
+
             OrchestrationResult result;
+            bool reportSkip;
             try
             {
                 var orchestrator = new BackupOrchestrator(_driveScanner, _logger);
-                result = orchestrator.RunOnce(_settings);
+                var progress = new Progress<int>(processed =>
+                    _trayIcon.Text = Truncate($"Auto Backup - 备份中… 已处理 {processed} 个文件"));
 
-                _settings.LastRunAt = DateTime.Now;
-                SettingsStore.Save(_settings, _settingsPath);
+                reportSkip = manualTrigger || _skipReportedForDueDate != DateTime.Now.Date;
+                result = orchestrator.RunOnce(_settings, logSkips: reportSkip, progress: progress);
+
+                if (result.Outcome is OrchestrationOutcome.Success or OrchestrationOutcome.PartialSuccess)
+                {
+                    // Only a run that actually backed something up may claim today's slot or
+                    // the tray's "last backup" time; a skipped run must stay due and stay
+                    // visibly un-backed-up.
+                    _settings.LastSuccessfulRunAt = DateTime.Now;
+                    SettingsStore.Save(_settings, _settingsPath);
+                }
             }
             catch (Exception ex)
             {
@@ -136,11 +178,18 @@ public class TrayApplicationContext : ApplicationContext
                 }
 
                 PostToUiThread(() =>
-                    _trayIcon.ShowBalloonTip(5000, "Auto Backup", $"备份出现意外错误：{ex.Message}", ToolTipIcon.Error));
+                {
+                    SetBusyUi(false, BuildTrayText());
+                    _trayIcon.ShowBalloonTip(5000, "Auto Backup", $"备份出现意外错误：{ex.Message}", ToolTipIcon.Error);
+                });
                 return;
             }
 
-            PostToUiThread(() => ApplyResultToUi(result, manualTrigger));
+            PostToUiThread(() =>
+            {
+                SetBusyUi(false, BuildTrayText());
+                ApplyResultToUi(result, manualTrigger, reportSkip);
+            });
         }
         finally
         {
@@ -148,9 +197,30 @@ public class TrayApplicationContext : ApplicationContext
         }
     }
 
-    private void ApplyResultToUi(OrchestrationResult result, bool manualTrigger)
+    private void SetBusyUi(bool busy, string trayText)
     {
-        _trayIcon.Text = BuildTrayText();
+        _backupNowMenuItem.Enabled = !busy;
+        _trayIcon.Text = Truncate(trayText);
+    }
+
+    // NotifyIcon.Text throws above 63 characters.
+    private static string Truncate(string text) => text.Length <= 63 ? text : text[..60] + "…";
+
+    private void ApplyResultToUi(OrchestrationResult result, bool manualTrigger, bool reportSkip)
+    {
+        _trayIcon.Text = Truncate(BuildTrayText());
+
+        if (result.Outcome is OrchestrationOutcome.Success or OrchestrationOutcome.PartialSuccess)
+        {
+            _skipReportedForDueDate = null;
+        }
+        else if (!manualTrigger)
+        {
+            // Remember that this due period's skip has been reported, so the once-a-minute
+            // catch-up retries stay silent until the situation actually changes.
+            if (!reportSkip) return;
+            _skipReportedForDueDate = DateTime.Now.Date;
+        }
 
         switch (result.Outcome)
         {
@@ -161,7 +231,7 @@ public class TrayApplicationContext : ApplicationContext
                 _trayIcon.ShowBalloonTip(5000, "Auto Backup", $"备份部分完成：{result.Message}", ToolTipIcon.Warning);
                 break;
             case OrchestrationOutcome.DriveNotConnected:
-                _trayIcon.ShowBalloonTip(5000, "Auto Backup", "备份硬盘未连接，请插入后等待下次备份，或点击“立即备份”重试。", ToolTipIcon.Warning);
+                _trayIcon.ShowBalloonTip(5000, "Auto Backup", "备份硬盘未连接。插上硬盘后会自动补做这次备份。", ToolTipIcon.Warning);
                 break;
             case OrchestrationOutcome.InsufficientSpace:
                 _trayIcon.ShowBalloonTip(5000, "Auto Backup", "备份硬盘剩余空间不足，本次备份已跳过。", ToolTipIcon.Warning);
@@ -219,24 +289,46 @@ public class TrayApplicationContext : ApplicationContext
 
     private string BuildTrayText()
     {
-        var last = _settings.LastRunAt.HasValue ? _settings.LastRunAt.Value.ToString("MM-dd HH:mm") : "从未";
+        var last = _settings.LastSuccessfulRunAt.HasValue
+            ? _settings.LastSuccessfulRunAt.Value.ToString("MM-dd HH:mm")
+            : "从未";
         return $"Auto Backup - 上次备份: {last}";
+    }
+
+    private void OnViewLogClicked(object? sender, EventArgs e)
+    {
+        using var form = new LogViewerForm(_logger);
+        form.ShowDialog();
     }
 
     private void OnOpenSettingsClicked(object? sender, EventArgs e)
     {
         using var form = new SettingsForm(_settings);
-        if (form.ShowDialog() == DialogResult.OK)
-        {
-            _settings = form.Settings;
-            SettingsStore.Save(_settings, _settingsPath);
-            StartupRegistration.Apply(_settings.StartWithWindows, Application.ExecutablePath);
-            _trayIcon.Text = BuildTrayText();
-        }
+        if (form.ShowDialog() != DialogResult.OK) return;
+
+        var updated = form.Settings;
+        // The dialog captured its copy when it opened; a backup that finished while it was
+        // open must not have its timestamp rolled back by saving the stale value.
+        updated.LastSuccessfulRunAt = _settings.LastSuccessfulRunAt;
+
+        _settings = updated;
+        SettingsStore.Save(_settings, _settingsPath);
+        StartupRegistration.Apply(_settings.StartWithWindows, Application.ExecutablePath);
+        _trayIcon.Text = Truncate(BuildTrayText());
     }
 
     private void OnExitClicked(object? sender, EventArgs e)
     {
+        if (Volatile.Read(ref _isBackupRunning) != 0)
+        {
+            var confirm = MessageBox.Show(
+                "备份正在进行中，现在退出会中断它（这次的快照会作废，下次重新备份）。确定要退出吗？",
+                "Auto Backup",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+            if (confirm != DialogResult.Yes) return;
+        }
+
         _schedulerTimer.Dispose();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();

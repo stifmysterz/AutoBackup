@@ -18,5 +18,11 @@ public class BackupSettings
     public int RetentionDays { get; set; } = 30;
     public List<string> CustomExcludePatterns { get; set; } = new();
     public bool StartWithWindows { get; set; } = true;
-    public DateTime? LastRunAt { get; set; }
+
+    /// <summary>
+    /// When a backup last actually completed. Only successful (or partially successful) runs
+    /// update it - a run that was skipped because the drive was absent must not look like a
+    /// backup in the tray tooltip, and must not satisfy today's schedule.
+    /// </summary>
+    public DateTime? LastSuccessfulRunAt { get; set; }
 }

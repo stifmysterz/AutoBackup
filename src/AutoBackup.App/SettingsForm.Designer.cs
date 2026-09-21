@@ -57,6 +57,7 @@ partial class SettingsForm
         _saveButton = new Button { Left = 250, Top = 450, Width = 80, Text = "保存", DialogResult = DialogResult.OK };
         _cancelButton = new Button { Left = 340, Top = 450, Width = 80, Text = "取消", DialogResult = DialogResult.Cancel };
 
+        AutoScaleMode = AutoScaleMode.Font;
         Text = "Auto Backup 设置";
         ClientSize = new Size(440, 500);
         FormBorderStyle = FormBorderStyle.FixedDialog;

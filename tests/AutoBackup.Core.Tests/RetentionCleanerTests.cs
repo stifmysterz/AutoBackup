@@ -34,6 +34,28 @@ public class RetentionCleanerTests
     }
 
     [Fact]
+    public void ReportsFailure_AndStillPrunesOtherSnapshots_WhenOneIsLocked()
+    {
+        using var temp = new TempDirectory();
+        var backupRoot = Path.Combine(temp.Path, "AutoBackup");
+        var lockedSnapshot = Directory.CreateDirectory(Path.Combine(backupRoot, "2026-01-01_2200")).FullName;
+        var otherExpired = Directory.CreateDirectory(Path.Combine(backupRoot, "2026-01-02_2200")).FullName;
+        Directory.CreateDirectory(Path.Combine(backupRoot, "2026-09-10_2200"));
+        var lockedFile = Path.Combine(lockedSnapshot, "locked.txt");
+        File.WriteAllText(lockedFile, "x");
+
+        using (File.Open(lockedFile, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var failures = RetentionCleaner.CleanOldSnapshots(backupRoot, retentionDays: 30, now: new DateTime(2026, 9, 11));
+
+            Assert.Single(failures);
+            Assert.Contains("2026-01-01_2200", failures[0]);
+            Assert.True(Directory.Exists(lockedSnapshot));
+            Assert.False(Directory.Exists(otherExpired));
+        }
+    }
+
+    [Fact]
     public void SharedHardLinkedFile_SurvivesDeletionOfOneSnapshot()
     {
         using var temp = new TempDirectory();

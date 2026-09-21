@@ -5,7 +5,17 @@ namespace AutoBackup.Core.Backup;
 
 public class BackupEngine
 {
-    public BackupResult RunBackup(IReadOnlyList<string> sourceFolders, string driveRoot, IReadOnlyList<string> customExcludePatterns, DateTime? now = null)
+    // Reporting every single file would flood a UI thread on a large backup; a file-count
+    // heartbeat is enough to show the run is alive rather than hung.
+    private const int ProgressReportInterval = 50;
+
+    /// <param name="progress">Receives the running count of files processed.</param>
+    public BackupResult RunBackup(
+        IReadOnlyList<string> sourceFolders,
+        string driveRoot,
+        IReadOnlyList<string> customExcludePatterns,
+        DateTime? now = null,
+        IProgress<int>? progress = null)
     {
         var startedAt = now ?? DateTime.Now;
         var backupRoot = SnapshotPathPlanner.GetBackupRoot(driveRoot);
@@ -31,12 +41,14 @@ public class BackupEngine
         long bytesCopied = 0;
         var errors = new List<string>();
 
+        var processed = 0;
         foreach (var source in sourceFolders)
         {
             if (!Directory.Exists(source)) continue;
             var alias = aliases[source];
-            CopyDirectory(new DirectoryInfo(source), alias, workingPath, previousSnapshot, customExcludePatterns, ref copied, ref linked, ref failed, ref bytesCopied, errors);
+            CopyDirectory(new DirectoryInfo(source), alias, workingPath, previousSnapshot, customExcludePatterns, ref copied, ref linked, ref failed, ref bytesCopied, ref processed, progress, errors);
         }
+        progress?.Report(processed);
 
         var finalPath = SnapshotPathPlanner.GetFinalPath(workingPath);
 
@@ -87,6 +99,8 @@ public class BackupEngine
         ref int linked,
         ref int failed,
         ref long bytesCopied,
+        ref int processed,
+        IProgress<int>? progress,
         List<string> errors)
     {
         var destDir = Path.Combine(workingRoot, relativePath);
@@ -123,7 +137,7 @@ public class BackupEngine
             }
             if (exclude) continue;
 
-            CopyDirectory(subDir, Path.Combine(relativePath, subDir.Name), workingRoot, previousSnapshotRoot, customExcludePatterns, ref copied, ref linked, ref failed, ref bytesCopied, errors);
+            CopyDirectory(subDir, Path.Combine(relativePath, subDir.Name), workingRoot, previousSnapshotRoot, customExcludePatterns, ref copied, ref linked, ref failed, ref bytesCopied, ref processed, progress, errors);
         }
 
         foreach (var file in files)
@@ -143,6 +157,9 @@ public class BackupEngine
 
             var destFile = Path.Combine(destDir, file.Name);
             var previousFile = previousSnapshotRoot == null ? null : Path.Combine(previousSnapshotRoot, relativePath, file.Name);
+
+            processed++;
+            if (processed % ProgressReportInterval == 0) progress?.Report(processed);
 
             try
             {

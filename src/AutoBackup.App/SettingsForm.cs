@@ -75,9 +75,22 @@ public partial class SettingsForm : Form
         }
 
         var connected = _selectedDrive ?? DriveIdentifier.FindBySerial(_driveScanner.GetReadyDrives(), serial);
-        _targetDriveLabel.Text = connected == null
-            ? $"备份目标：{label}（当前未连接）"
-            : $"备份目标：{connected.VolumeLabel} ({connected.DriveLetter})　剩余 {ByteSizeFormatter.Format(connected.FreeBytes)} / 共 {ByteSizeFormatter.Format(connected.TotalBytes)}";
+        if (connected == null)
+        {
+            _targetDriveLabel.Text = $"备份目标：{DescribeDrive(label, null)}（当前未连接）";
+            return;
+        }
+
+        _targetDriveLabel.Text =
+            $"备份目标：{DescribeDrive(connected.VolumeLabel, connected.DriveLetter)}　" +
+            $"剩余 {ByteSizeFormatter.Format(connected.FreeBytes)} / 共 {ByteSizeFormatter.Format(connected.TotalBytes)}";
+    }
+
+    /// <summary>Unlabelled volumes are common; showing just the letter beats a stray gap.</summary>
+    private static string DescribeDrive(string? volumeLabel, string? driveLetter)
+    {
+        if (string.IsNullOrWhiteSpace(volumeLabel)) return driveLetter ?? "(无卷标)";
+        return driveLetter == null ? volumeLabel : $"{volumeLabel} ({driveLetter})";
     }
 
     private void ShowSnapshotHistory()
@@ -157,13 +170,31 @@ public partial class SettingsForm : Form
         }
     }
 
-    private void RunBackupNow()
+    private async void RunBackupNow()
     {
         var settings = BuildSettingsFromForm();
         var logger = new BackupLogger(Path.Combine(Path.GetDirectoryName(CoreSettings.GetDefaultSettingsPath())!, "backup.log"));
-        var orchestrator = new BackupOrchestrator(_driveScanner, logger);
-        var result = orchestrator.RunOnce(settings);
-        MessageBox.Show(result.Message, "备份结果", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+        // Copying files on the UI thread locks up this dialog for the whole backup.
+        var originalText = _backupNowButton.Text;
+        _backupNowButton.Enabled = false;
+        var progress = new Progress<int>(processed => _backupNowButton.Text = $"备份中… {processed}");
+
+        try
+        {
+            var result = await Task.Run(() => new BackupOrchestrator(_driveScanner, logger).RunOnce(settings, progress: progress));
+            MessageBox.Show(result.Message, "备份结果", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"备份出现意外错误：{ex.Message}", "备份结果", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _backupNowButton.Text = originalText;
+            _backupNowButton.Enabled = true;
+            RefreshTargetDriveLabel();
+        }
     }
 
     private BackupSettings BuildSettingsFromForm()
@@ -182,7 +213,7 @@ public partial class SettingsForm : Form
             RetentionDays = (int)_retentionDaysUpDown.Value,
             CustomExcludePatterns = _excludeListBox.Items.Cast<string>().ToList(),
             StartWithWindows = _startWithWindowsCheckBox.Checked,
-            LastRunAt = Settings.LastRunAt
+            LastSuccessfulRunAt = Settings.LastSuccessfulRunAt
         };
     }
 }
