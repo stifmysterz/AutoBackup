@@ -28,13 +28,14 @@ public class BackupEngine
 
         var aliases = SourceAliasMapper.BuildAliases(sourceFolders);
         int copied = 0, linked = 0, failed = 0;
+        long bytesCopied = 0;
         var errors = new List<string>();
 
         foreach (var source in sourceFolders)
         {
             if (!Directory.Exists(source)) continue;
             var alias = aliases[source];
-            CopyDirectory(new DirectoryInfo(source), alias, workingPath, previousSnapshot, customExcludePatterns, ref copied, ref linked, ref failed, errors);
+            CopyDirectory(new DirectoryInfo(source), alias, workingPath, previousSnapshot, customExcludePatterns, ref copied, ref linked, ref failed, ref bytesCopied, errors);
         }
 
         var finalPath = SnapshotPathPlanner.GetFinalPath(workingPath);
@@ -68,6 +69,7 @@ public class BackupEngine
             FilesCopied = copied,
             FilesLinked = linked,
             FilesFailed = failed,
+            BytesCopied = bytesCopied,
             Errors = errors,
             SnapshotPath = finalPath,
             StartedAt = startedAt,
@@ -84,6 +86,7 @@ public class BackupEngine
         ref int copied,
         ref int linked,
         ref int failed,
+        ref long bytesCopied,
         List<string> errors)
     {
         var destDir = Path.Combine(workingRoot, relativePath);
@@ -120,7 +123,7 @@ public class BackupEngine
             }
             if (exclude) continue;
 
-            CopyDirectory(subDir, Path.Combine(relativePath, subDir.Name), workingRoot, previousSnapshotRoot, customExcludePatterns, ref copied, ref linked, ref failed, errors);
+            CopyDirectory(subDir, Path.Combine(relativePath, subDir.Name), workingRoot, previousSnapshotRoot, customExcludePatterns, ref copied, ref linked, ref failed, ref bytesCopied, errors);
         }
 
         foreach (var file in files)
@@ -170,6 +173,7 @@ public class BackupEngine
                 else
                 {
                     copied++;
+                    bytesCopied += destLength;
                 }
             }
             catch (Exception ex)

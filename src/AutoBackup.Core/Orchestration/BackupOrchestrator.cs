@@ -1,5 +1,6 @@
 using AutoBackup.Core.Backup;
 using AutoBackup.Core.Drives;
+using AutoBackup.Core.Formatting;
 using AutoBackup.Core.Logging;
 using AutoBackup.Core.Models;
 
@@ -67,7 +68,7 @@ public class BackupOrchestrator
         RetentionCleaner.CleanOldSnapshots(backupRoot, settings.RetentionDays, DateTime.Now);
 
         var outcome = backupResult.Outcome == BackupOutcome.Success ? OrchestrationOutcome.Success : OrchestrationOutcome.PartialSuccess;
-        var message = $"复制 {backupResult.FilesCopied}，硬链接 {backupResult.FilesLinked}，失败 {backupResult.FilesFailed}";
+        var message = $"复制 {backupResult.FilesCopied} ({ByteSizeFormatter.Format(backupResult.BytesCopied)})，硬链接 {backupResult.FilesLinked}，失败 {backupResult.FilesFailed}";
         if (backupResult.Errors.Count > 0)
         {
             var shown = string.Join("; ", backupResult.Errors.Take(5));
@@ -77,6 +78,26 @@ public class BackupOrchestrator
         _logger.Append(new BackupLogEntry { Timestamp = DateTime.Now, Outcome = outcome.ToString(), Message = message });
 
         return new OrchestrationResult { Outcome = outcome, BackupResult = backupResult, Message = message };
+    }
+
+    /// <summary>
+    /// Prunes expired snapshots without running a backup. Safe to call frequently (e.g. every
+    /// scheduler tick) so retention cleanup no longer depends on a backup actually succeeding -
+    /// a backup that keeps getting skipped (drive not connected, wrong day) would otherwise
+    /// leave expired snapshots sitting on disk indefinitely.
+    /// </summary>
+    /// <returns>true if the target drive was connected and cleanup ran; false if there was
+    /// nothing to do (no drive configured, or it isn't connected right now).</returns>
+    public bool RunCleanupOnly(BackupSettings settings)
+    {
+        if (string.IsNullOrEmpty(settings.TargetVolumeSerial)) return false;
+
+        var targetDrive = DriveIdentifier.FindBySerial(_driveScanner.GetReadyDrives(), settings.TargetVolumeSerial);
+        if (targetDrive == null) return false;
+
+        var backupRoot = SnapshotPathPlanner.GetBackupRoot(targetDrive.DriveLetter);
+        RetentionCleaner.CleanOldSnapshots(backupRoot, settings.RetentionDays, DateTime.Now);
+        return true;
     }
 
     private void LogSkip(string message) =>

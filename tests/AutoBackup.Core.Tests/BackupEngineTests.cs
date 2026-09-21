@@ -20,8 +20,25 @@ public class BackupEngineTests
         Assert.Equal(BackupOutcome.Success, result.Outcome);
         Assert.Equal(1, result.FilesCopied);
         Assert.Equal(0, result.FilesLinked);
+        Assert.Equal(5, result.BytesCopied);
         Assert.True(Directory.Exists(result.SnapshotPath));
         Assert.Equal("hello", File.ReadAllText(Path.Combine(result.SnapshotPath, "Desktop", "a.txt")));
+    }
+
+    [Fact]
+    public void HardLinkedFiles_DoNotCountTowardBytesCopied()
+    {
+        using var temp = new TempDirectory();
+        var source = Directory.CreateDirectory(Path.Combine(temp.Path, "Desktop"));
+        File.WriteAllText(Path.Combine(source.FullName, "a.txt"), "hello");
+        var driveRoot = Directory.CreateDirectory(Path.Combine(temp.Path, "Drive")).FullName;
+        var engine = new BackupEngine();
+        engine.RunBackup(new[] { source.FullName }, driveRoot, Array.Empty<string>(), now: new DateTime(2026, 9, 11, 22, 0, 0));
+
+        var result = engine.RunBackup(new[] { source.FullName }, driveRoot, Array.Empty<string>(), now: new DateTime(2026, 9, 11, 22, 1, 0));
+
+        Assert.Equal(1, result.FilesLinked);
+        Assert.Equal(0, result.BytesCopied);
     }
 
     [Fact]

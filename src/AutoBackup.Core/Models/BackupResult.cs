@@ -12,6 +12,7 @@ public class BackupResult
     public int FilesCopied { get; init; }
     public int FilesLinked { get; init; }
     public int FilesFailed { get; init; }
+    public long BytesCopied { get; init; }
     public List<string> Errors { get; init; } = new();
     public required string SnapshotPath { get; init; }
     public required DateTime StartedAt { get; init; }

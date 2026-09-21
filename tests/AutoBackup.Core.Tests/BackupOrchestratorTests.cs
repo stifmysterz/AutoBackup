@@ -109,4 +109,55 @@ public class BackupOrchestratorTests
         Assert.NotNull(result.BackupResult);
         Assert.Equal(1, result.BackupResult!.FilesCopied);
     }
+
+    [Fact]
+    public void RunCleanupOnly_ReturnsFalse_WhenDriveNotConnected()
+    {
+        using var temp = new TempDirectory();
+        var scanner = new FakeDriveScanner();
+        var orchestrator = new BackupOrchestrator(scanner, MakeLogger(temp.Path));
+        var settings = new BackupSettings { TargetVolumeSerial = "MISSING" };
+
+        var ran = orchestrator.RunCleanupOnly(settings);
+
+        Assert.False(ran);
+    }
+
+    [Fact]
+    public void RunCleanupOnly_ReturnsFalse_WhenNoDriveConfiguredYet()
+    {
+        using var temp = new TempDirectory();
+        var scanner = new FakeDriveScanner();
+        var orchestrator = new BackupOrchestrator(scanner, MakeLogger(temp.Path));
+        var settings = new BackupSettings();
+
+        var ran = orchestrator.RunCleanupOnly(settings);
+
+        Assert.False(ran);
+    }
+
+    [Fact]
+    public void RunCleanupOnly_DeletesExpiredSnapshots_WithoutRunningABackup()
+    {
+        using var temp = new TempDirectory();
+        var driveRoot = Directory.CreateDirectory(Path.Combine(temp.Path, "Drive")).FullName;
+        var backupRoot = Path.Combine(driveRoot, "AutoBackup");
+        var oldSnapshot = Directory.CreateDirectory(Path.Combine(backupRoot, "2020-01-01_2200")).FullName;
+        var recentSnapshot = Directory.CreateDirectory(Path.Combine(backupRoot, "2026-09-10_2200")).FullName;
+        var scanner = new FakeDriveScanner
+        {
+            Drives = new List<DriveInfoRecord>
+            {
+                new() { DriveLetter = driveRoot, VolumeSerial = "SER-1", FreeBytes = 1_000_000_000, TotalBytes = 1_000_000_000 }
+            }
+        };
+        var orchestrator = new BackupOrchestrator(scanner, MakeLogger(temp.Path));
+        var settings = new BackupSettings { TargetVolumeSerial = "SER-1", RetentionDays = 30 };
+
+        var ran = orchestrator.RunCleanupOnly(settings);
+
+        Assert.True(ran);
+        Assert.False(Directory.Exists(oldSnapshot));
+        Assert.True(Directory.Exists(recentSnapshot));
+    }
 }
