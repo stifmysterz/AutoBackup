@@ -259,4 +259,20 @@ public class BackupEngineTests
         // left behind to collide with a future run.
         Assert.False(Directory.Exists(first.SnapshotPath + ".inprogress"));
     }
+
+    [Fact]
+    public void FolderExcludedByPath_WithTrailingBackslash_IsLeftOutOfSnapshot()
+    {
+        using var temp = new TempDirectory();
+        var source = Directory.CreateDirectory(Path.Combine(temp.Path, "Downloads"));
+        File.WriteAllText(Path.Combine(source.FullName, "keep.txt"), "keep");
+        var movies = Directory.CreateDirectory(Path.Combine(source.FullName, "Movies"));
+        File.WriteAllText(Path.Combine(movies.FullName, "big.mp4"), "video");
+        var driveRoot = Directory.CreateDirectory(Path.Combine(temp.Path, "Drive")).FullName;
+
+        var result = new BackupEngine().RunBackup(new[] { source.FullName }, driveRoot, new[] { movies.FullName + @"\" });
+
+        Assert.True(File.Exists(Path.Combine(result.SnapshotPath, "Downloads", "keep.txt")));
+        Assert.False(Directory.Exists(Path.Combine(result.SnapshotPath, "Downloads", "Movies")));
+    }
 }

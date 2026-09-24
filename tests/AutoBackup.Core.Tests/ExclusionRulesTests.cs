@@ -56,4 +56,48 @@ public class ExclusionRulesTests
     {
         Assert.False(ExclusionRules.ShouldExclude(@"C:\Docs\report.docx", FileAttributes.Normal, NoCustomPatterns));
     }
+
+    // Path rules used to be compared character-for-character, so any of these harmless
+    // variations made the rule silently stop working.
+    [Theory]
+    [InlineData(@"C:\Docs\Movies\")]
+    [InlineData(@"  C:\Docs\Movies  ")]
+    [InlineData(@"C:/Docs/Movies")]
+    [InlineData(@"c:\docs\movies")]
+    public void Excludes_CustomPath_DespiteFormattingVariations(string pattern)
+    {
+        Assert.True(ExclusionRules.ShouldExclude(@"C:\Docs\Movies", FileAttributes.Directory, new[] { pattern }));
+    }
+
+    [Fact]
+    public void Excludes_CustomWildcard_WithSurroundingWhitespace()
+    {
+        Assert.True(ExclusionRules.ShouldExclude(@"C:\Docs\app.log", FileAttributes.Normal, new[] { " *.log " }));
+    }
+
+    [Fact]
+    public void DoesNotExclude_SiblingFolderThatMerelySharesAPrefix()
+    {
+        var patterns = new[] { @"C:\Docs\Movies" };
+        Assert.False(ExclusionRules.ShouldExclude(@"C:\Docs\Movies2", FileAttributes.Directory, patterns));
+    }
+
+    [Fact]
+    public void IgnoresBlankPatterns()
+    {
+        Assert.False(ExclusionRules.ShouldExclude(@"C:\Docs\report.docx", FileAttributes.Normal, new[] { "", "   " }));
+    }
+
+    [Theory]
+    [InlineData(@"C:\Users\me\Downloads\Movies", true)]
+    [InlineData(@"C:\Users\me\Downloads\Movies\", true)]
+    [InlineData(@"C:\Users\me\Downloads", false)]   // the source itself: its root is never checked
+    [InlineData(@"C:\Users\me", false)]             // a parent of a source
+    [InlineData(@"C:\Users\me\Downloads2\x", false)] // shares a prefix but is a different folder
+    [InlineData(@"D:\Elsewhere", false)]
+    public void IsInsideAnySource_OnlyForFoldersABackupWouldActuallyWalk(string folder, bool expected)
+    {
+        var sources = new[] { @"C:\Users\me\Desktop", @"C:\Users\me\Downloads" };
+        Assert.Equal(expected, ExclusionRules.IsInsideAnySource(folder, sources));
+    }
 }

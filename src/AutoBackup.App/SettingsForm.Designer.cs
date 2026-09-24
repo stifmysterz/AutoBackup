@@ -13,7 +13,8 @@ partial class SettingsForm
     private DateTimePicker _scheduleTimePicker;
     private NumericUpDown _retentionDaysUpDown;
     private ListBox _excludeListBox;
-    private Button _addExcludeButton;
+    private Button _addExcludeFolderButton;
+    private Button _addExcludePatternButton;
     private Button _removeExcludeButton;
     private CheckBox _startWithWindowsCheckBox;
     private Button _saveButton;
@@ -47,9 +48,10 @@ partial class SettingsForm
         _retentionDaysUpDown = new NumericUpDown { Left = 170, Top = 280, Width = 100, Minimum = 1, Maximum = 3650, Value = 30 };
 
         var excludeLabel = new Label { Left = 10, Top = 310, Width = 200, Text = "自定义排除清单：" };
-        _excludeListBox = new ListBox { Left = 10, Top = 330, Width = 300, Height = 80 };
-        _addExcludeButton = new Button { Left = 320, Top = 330, Width = 100, Text = "添加" };
-        _removeExcludeButton = new Button { Left = 320, Top = 360, Width = 100, Text = "删除选中" };
+        _excludeListBox = new ListBox { Left = 10, Top = 330, Width = 300, Height = 80, HorizontalScrollbar = true };
+        _addExcludeFolderButton = new Button { Left = 320, Top = 328, Width = 100, Height = 26, Text = "选择文件夹" };
+        _addExcludePatternButton = new Button { Left = 320, Top = 356, Width = 100, Height = 26, Text = "输入规则" };
+        _removeExcludeButton = new Button { Left = 320, Top = 384, Width = 100, Height = 26, Text = "删除选中" };
 
         _startWithWindowsCheckBox = new CheckBox { Left = 10, Top = 420, Width = 200, Text = "开机自动启动" };
 
@@ -71,7 +73,7 @@ partial class SettingsForm
             _targetDriveLabel, _snapshotHistoryButton, _changeDriveButton,
             scheduleLabel, _scheduleDaysListBox, timeLabel, _scheduleTimePicker,
             retentionLabel, _retentionDaysUpDown,
-            excludeLabel, _excludeListBox, _addExcludeButton, _removeExcludeButton,
+            excludeLabel, _excludeListBox, _addExcludeFolderButton, _addExcludePatternButton, _removeExcludeButton,
             _startWithWindowsCheckBox,
             _backupNowButton, _saveButton, _cancelButton
         });

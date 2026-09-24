@@ -1,5 +1,6 @@
 using AutoBackup.Core.Backup;
 using AutoBackup.Core.Drives;
+using AutoBackup.Core.Exclusion;
 using AutoBackup.Core.Formatting;
 using AutoBackup.Core.Models;
 using AutoBackup.Core.Orchestration;
@@ -45,11 +46,8 @@ public partial class SettingsForm : Form
             if (_sourceListBox.SelectedItem != null) _sourceListBox.Items.Remove(_sourceListBox.SelectedItem);
         };
         _changeDriveButton.Click += (_, _) => PickTargetDrive();
-        _addExcludeButton.Click += (_, _) =>
-        {
-            var pattern = Microsoft.VisualBasic.Interaction.InputBox("输入要排除的文件夹路径或文件名模式（如 *.log）：", "添加排除项");
-            if (!string.IsNullOrWhiteSpace(pattern)) _excludeListBox.Items.Add(pattern);
-        };
+        _addExcludeFolderButton.Click += (_, _) => AddExcludedFolder();
+        _addExcludePatternButton.Click += (_, _) => AddExcludePattern();
         _removeExcludeButton.Click += (_, _) =>
         {
             if (_excludeListBox.SelectedItem != null) _excludeListBox.Items.Remove(_excludeListBox.SelectedItem);
@@ -57,6 +55,58 @@ public partial class SettingsForm : Form
         _backupNowButton.Click += (_, _) => RunBackupNow();
         _snapshotHistoryButton.Click += (_, _) => ShowSnapshotHistory();
         FormClosing += OnFormClosing;
+    }
+
+    /// <summary>
+    /// Picking a folder instead of typing its path rules out the typos that used to make a
+    /// path rule silently match nothing.
+    /// </summary>
+    private void AddExcludedFolder()
+    {
+        var sources = _sourceListBox.Items.Cast<string>().ToList();
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "选择不需要备份的文件夹（必须在备份来源里面）",
+            UseDescriptionForTitle = true
+        };
+        // Exclusions only matter inside a source, so start the user where they'll be looking.
+        var start = sources.FirstOrDefault(Directory.Exists);
+        if (start != null) dialog.InitialDirectory = start;
+
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        var folder = dialog.SelectedPath;
+
+        if (!ExclusionRules.IsInsideAnySource(folder, sources))
+        {
+            var confirm = MessageBox.Show(
+                $"\"{folder}\" 不在任何备份来源里面，排除它不会有任何效果。\n\n仍然要添加吗？",
+                "Auto Backup",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+            if (confirm != DialogResult.Yes) return;
+        }
+
+        AddExcludeEntry(folder);
+    }
+
+    private void AddExcludePattern()
+    {
+        var pattern = Microsoft.VisualBasic.Interaction.InputBox(
+            "输入要排除的文件名或文件夹名，可以用 * 通配符。\n\n例如：*.log　*.crdownload　node_modules\n\n（要排除某个特定文件夹，用「选择文件夹」更方便）",
+            "输入排除规则");
+        AddExcludeEntry(pattern);
+    }
+
+    private void AddExcludeEntry(string entry)
+    {
+        entry = entry.Trim();
+        if (entry.Length == 0) return;
+
+        var alreadyListed = _excludeListBox.Items.Cast<string>()
+            .Any(existing => string.Equals(existing.Trim(), entry, StringComparison.OrdinalIgnoreCase));
+        if (alreadyListed) return;
+
+        _excludeListBox.Items.Add(entry);
     }
 
     /// <summary>
