@@ -23,6 +23,9 @@ public class ExclusionRulesTests
     [InlineData("draft.temp")]
     [InlineData("~$report.docx")]
     [InlineData("Thumbs.db")]
+    [InlineData("setup.exe.crdownload")]
+    [InlineData("movie.mkv.part")]
+    [InlineData(".DS_Store")]
     public void Excludes_TempFilePatterns(string fileName)
     {
         Assert.True(ExclusionRules.ShouldExclude($@"C:\Docs\{fileName}", FileAttributes.Normal, NoCustomPatterns));

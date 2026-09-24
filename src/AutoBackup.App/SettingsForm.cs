@@ -92,7 +92,7 @@ public partial class SettingsForm : Form
     private void AddExcludePattern()
     {
         var pattern = Microsoft.VisualBasic.Interaction.InputBox(
-            "输入要排除的文件名或文件夹名，可以用 * 通配符。\n\n例如：*.log　*.crdownload　node_modules\n\n（要排除某个特定文件夹，用「选择文件夹」更方便）",
+            "输入要排除的文件名或文件夹名，可以用 * 通配符。\n\n例如：*.log　*.iso　node_modules\n\n（要排除某个特定文件夹，用「选择文件夹」更方便）",
             "输入排除规则");
         AddExcludeEntry(pattern);
     }

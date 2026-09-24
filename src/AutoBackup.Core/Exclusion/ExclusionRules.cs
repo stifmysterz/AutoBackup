@@ -4,7 +4,13 @@ namespace AutoBackup.Core.Exclusion;
 
 public static class ExclusionRules
 {
-    private static readonly string[] BuiltInNamePatterns = { "*.tmp", "*.temp", "~$*", "Thumbs.db" };
+    // Only names that are junk for everyone belong here - anything a user might conceivably
+    // want backed up stays opt-in via the custom list. *.crdownload / *.part are browsers'
+    // unfinished downloads; .DS_Store is macOS folder metadata carried over on copied files.
+    private static readonly string[] BuiltInNamePatterns =
+    {
+        "*.tmp", "*.temp", "~$*", "Thumbs.db", "*.crdownload", "*.part", ".DS_Store"
+    };
     private static readonly char[] Separators = { '\\', '/' };
 
     public static bool ShouldExclude(string fullPath, FileAttributes attributes, IReadOnlyList<string> customPatterns)
